@@ -135,7 +135,13 @@ def user_dashboard():
                         try:
                             file.seek(0)
                             files_payload = {"file": (file.name, file.getvalue(), file.type)}
-                            data_payload = {"amount": amount, "user_id": 101, "description": desc}
+                            data_payload = {
+                                "amount": amount, 
+                                "user_id": 101, 
+                                "description": desc,
+                                "hospital_name": hospital,
+                                "patient_name": name
+                            }
                             
                             res = requests.post(f"{API_URL}/upload-claim", files=files_payload, data=data_payload)
                             
@@ -255,12 +261,29 @@ def officer_dashboard():
                         
                         c1, c2 = st.columns([1, 1.5])
                         with c1:
-                            st.image(f"{API_URL}{c['input_data']['file_url']}", caption="Submitted Document", use_container_width=True)
+                            # Display visual forgery heatmap if available and score is significant, otherwise display original document
+                            heatmap_url = c.get('details', {}).get('cnn_heatmap')
+                            if heatmap_url and "temp_heatmap" not in heatmap_url:
+                                st.image(f"{API_URL}{heatmap_url}", caption="Visual Forgery Heatmap (ELA)", use_container_width=True)
+                            else:
+                                st.image(f"{API_URL}{c['input_data']['file_url']}", caption="Submitted Document", use_container_width=True)
                         
                         with c2:
                             st.markdown("### 📊 AI Analysis Report")
-                            st.write(f"**Claim Amount:** ₹{c['input_data']['amount_claimed']}")
-                            st.write(f"**Tamper Score:** {c['scores']['cnn_score']:.2f}")
+                            st.write(f"**Claimed Amount:** ₹{c['input_data']['amount_claimed']}")
+                            
+                            if 'details' in c:
+                                ext_amt = c['details'].get('extracted_amount')
+                                if ext_amt and ext_amt != 'None' and float(ext_amt) > 0:
+                                    st.write(f"**Extracted Bill Amount:** ₹{ext_amt}")
+                                b_date = c['details'].get('bill_date')
+                                if b_date and b_date != 'None':
+                                    st.write(f"**Bill Date:** {b_date}")
+                                gst = c['details'].get('gst_number')
+                                if gst and gst != 'None':
+                                    st.write(f"**GST Number:** {gst}")
+                                    
+                            st.write(f"**Tamper / Manipulation Score:** {c['scores']['cnn_score']:.2f}")
                             st.info(f"**🤖 Explainable AI (XAI):** {c['xai_explanation']}")
                             
                             report_url = f"{API_URL}/reports/Fraud_Report_{c['claim_id']}.pdf"

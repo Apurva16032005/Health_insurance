@@ -17,12 +17,14 @@ from models.multimodal import MultimodalFusion
 from models.xai import ExplainabilityModule
 
 from utils.preprocess import preprocess_for_ocr
-from utils.forensics import check_metadata
+from utils.forensics import check_metadata, error_level_analysis
 from utils.dedup import check_duplicate
 from utils.extract_fields import extract_key_fields
 from utils.combine_features import prepare_feature_vector
+from utils.validation_rules import check_benford_law
 # IMPORT THE NEW REPORT GENERATOR
 from utils.report_gen import generate_claim_report
+import re
 
 # --- CONFIGURATION ---
 app = FastAPI(title="Insurance Fraud Detection System")
@@ -71,7 +73,9 @@ async def upload_claim(
     file: UploadFile = File(...),
     amount: float = Form(...),
     user_id: int = Form(...),
-    description: str = Form("")
+    description: str = Form(""),
+    hospital_name: str = Form(""),
+    patient_name: str = Form("")
 ):
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
@@ -98,6 +102,9 @@ async def upload_claim(
         
         # A. Forensic Analysis
         meta_result = check_metadata(file_path)
+        ela_score = error_level_analysis(file_path)
+        if ela_score > 0.4:
+            meta_result['is_suspicious'] = True
         dedup_result = check_duplicate(file_path, str(claim_id))
         
         # B. Visual Forgery Detection
@@ -111,15 +118,42 @@ async def upload_claim(
         nlp_embedding = nlp_engine.get_embedding(ocr_result['raw_text'])
         nlp_result = nlp_engine.extract_medical_entities(ocr_result['raw_text'])
 
+        # Benford's Law numeric check
+        all_numbers = []
+        for word in re.findall(r'\b\d+\b', ocr_result['raw_text']):
+            try:
+                val = int(word)
+                if val > 0:
+                    all_numbers.append(val)
+            except:
+                pass
+        benford_score = check_benford_law(all_numbers)
+
         # D. ML Fraud Prediction
         features = prepare_feature_vector(ocr_result, cnn_result, nlp_result, meta_result, amount)
         ml_prob = ml_brain.predict(features)
         
         # E. Multimodal Fusion
+        visual_score = max(cnn_result['score'], ela_score)
         fusion_result = fusion_engine.predict_fraud_score(
-            nlp_embedding, cnn_result['score'], ocr_result, amount
+            nlp_embedding, visual_score, ocr_result, amount
         )
         
+        # Add ELA risk factor if high
+        if ela_score > 0.4:
+            fusion_result['risk_factors'].append(f"ELA Forgery Pattern Detected (Score: {ela_score:.2f})")
+            
+        # Add Benford's Law risk factor if high
+        if benford_score > 0.5:
+            fusion_result['risk_factors'].append("Benford's Law Anomaly: Suspicious number distribution")
+            
+        # Add Layout Match risk factor if mismatch
+        if hospital_name:
+            from utils.layout_match import match_template
+            layout_result = match_template(file_path, hospital_name)
+            if layout_result.get('match_score', 1.0) < 0.4 and layout_result.get('status') == "Layout Mismatch":
+                fusion_result['risk_factors'].append(f"Layout Mismatch: Bill deviates from {hospital_name} template")
+
         final_score = (fusion_result['fraud_score'] * 0.6) + (ml_prob * 0.4)
         
         if dedup_result['is_duplicate']:
@@ -148,11 +182,23 @@ async def upload_claim(
         sql_update = "UPDATE claims SET ai_status = 'completed' WHERE id = %s"
         cursor.execute(sql_update, (claim_id,))
         
+        # Extract structured fields
+        extracted_amt = ocr_result.get('structured_data', {}).get('total_amount', 0.0)
+        bill_date = ocr_result.get('structured_data', {}).get('date', None)
+        ocr_hosp = ocr_result.get('structured_data', {}).get('hospital_name', None) or hospital_name
+        gst_no = ocr_result.get('structured_data', {}).get('gst_no', None)
+
         sql_ai_data = """
-            INSERT INTO claim_ai_data (claim_id, fraud_score, tamper_score, ocr_text, risk_label, created_at)
-            VALUES (%s, %s, %s, %s, %s, NOW())
+            INSERT INTO claim_ai_data (
+                claim_id, fraud_score, tamper_score, ocr_text, risk_label, 
+                extracted_amount, bill_date, hospital_name, gst_number, created_at
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
         """
-        cursor.execute(sql_ai_data, (claim_id, final_score, cnn_result['score'], ocr_result['raw_text'][:1000], risk_label))
+        cursor.execute(sql_ai_data, (
+            claim_id, final_score, visual_score, ocr_result['raw_text'][:1000], risk_label,
+            extracted_amt, bill_date, ocr_hosp, gst_no
+        ))
         
         sql_xai = "INSERT INTO claim_xai (claim_id, explanation_text) VALUES (%s, %s)"
         cursor.execute(sql_xai, (claim_id, xai_report['human_readable_summary']))
@@ -193,6 +239,10 @@ def get_claims():
             a.fraud_score, 
             a.tamper_score, 
             a.risk_label,
+            a.hospital_name,
+            a.extracted_amount,
+            a.bill_date,
+            a.gst_number,
             x.explanation_text
         FROM claims c
         LEFT JOIN claim_ai_data a ON c.id = a.claim_id
@@ -210,6 +260,7 @@ def get_claims():
         # Handle missing values if AI hasn't run perfectly
         f_score = r['fraud_score'] if r['fraud_score'] is not None else 0.0
         t_score = r['tamper_score'] if r['tamper_score'] is not None else 0.0
+        hosp = r['hospital_name'] if r['hospital_name'] else "Unknown"
         
         formatted_claims.append({
             "claim_id": r['claim_id'],
@@ -217,7 +268,7 @@ def get_claims():
             "status": r['ai_status'],
             "input_data": {
                 "amount_claimed": r['claim_amount'],
-                "hospital_name": "Hospital (See Desc)", # Placeholder as we didn't store hospital name separately
+                "hospital_name": hosp,
                 "file_url": f"/uploads/{r['uploaded_filename']}"
             },
             "scores": {
@@ -226,7 +277,10 @@ def get_claims():
             },
             "details": {
                 "risk_label": r['risk_label'],
-                "cnn_heatmap": "/reports/temp_heatmap.png" # Default placeholder for demo
+                "extracted_amount": str(r['extracted_amount']) if r['extracted_amount'] is not None else "0.00",
+                "bill_date": r['bill_date'],
+                "gst_number": r['gst_number'],
+                "cnn_heatmap": f"/reports/heatmap_{r['uploaded_filename']}" if t_score > 0.4 else "/reports/temp_heatmap.png"
             },
             "xai_explanation": r['explanation_text'] or "Analysis complete. Review attached report."
         })
