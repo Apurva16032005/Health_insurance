@@ -1,58 +1,47 @@
-🏥 Health Insurance Claim Checker
+# Health Insurance Claim Checker (FraudShield AI)
 
-A Machine Learning + NLP + Data Analytics project for detecting incorrect, fraudulent, or mismatched health insurance claims.
+An intelligent multimodal AI system designed to detect incorrect, fraudulent, or mismatched health insurance claims. The application analyzes submitted claim documents (bills, receipts, etc.) and customer details to evaluate their authenticity using a combination of image forensics, OCR, NLP, and Explainable AI.
 
-📌 Overview
+## Features
+- **Claim Verification:** Compares customer details with claim details and flags suspicious or mismatched fields.
+- **OCR & NLP Extraction:** Extracts text from medical bills and discharge summaries (using tools like EasyOCR) and interprets medical terms using NLP.
+- **Image Forensics & ML:** Detects document forgery and tampering using Convolutional Neural Networks (CNN) and classifies claims (Legitimate, Suspicious, Fraud).
+- **Explainable AI (XAI):** Provides transparent reasoning (e.g., using SHAP/LIME) for why a claim might be flagged as fraudulent.
 
-The Health Insurance Claim Checker is an intelligent system that analyzes insurance claims, medical documents, and customer details to identify:
+## Project Structure
+- `backend/`: The FastAPI backend containing the core AI models, forensics utilities, and API endpoints.
+- `frontend/`: The Streamlit web dashboard for uploading claims, visualizing analytics, and viewing fraud analysis results.
+- `data/`: Contains sample bills, generated model outputs, and test data.
 
-Potential fraud
+## Setup Instructions
 
-Incorrect or mismatched claims
+### 1. Prerequisites
+Ensure you have Python 3.10+ installed. It is recommended to use a virtual environment.
 
-Missing or inconsistent information
+```bash
+# Create and activate a virtual environment
+python -m venv venv
+# On Windows:
+venv\Scripts\activate
+```
 
-High-risk claims requiring manual verification
+### 2. Install Dependencies
+Install the required packages for both the backend and frontend.
 
-The system combines data preprocessing, text extraction (OCR), machine learning, and explainable AI (XAI) to ensure transparency and accuracy.
+### 3. Running the Backend
+The backend runs on FastAPI.
 
-✨ Features
-🔍 Claim Verification
+```bash
+cd backend
+uvicorn app:app --reload
+```
+The API will be available at `http://localhost:8000`.
 
-Compares customer details with claim details
+### 4. Running the Frontend
+The frontend dashboard uses Streamlit.
 
-Flags suspicious or mismatched fields
-
-Detects incomplete forms
-
-📄 OCR & NLP
-
-Extracts text from medical bills, prescriptions, discharge summaries (EasyOCR)
-
-Cleans, processes, and interprets medical terms using NLP
-
-🤖 Machine Learning
-
-Classifies claims into:
-
-Legitimate
-
-Suspicious
-
-Potential fraud
-
-Uses models such as Random Forest, Logistic Regression, or Deep Learning (as implemented)
-
-📊 Data Analytics
-
-Customer demographics study
-
-Claim patterns & risk analysis
-
-Statistical KPIs and visual dashboards
-
-🧠 Explainable AI (XAI)
-
-SHAP/LIME for interpreting decisions
-
-Highlights which fields contributed to claim rejection/fraud detection
+```bash
+cd frontend
+streamlit run streamlit_app.py
+```
+The dashboard will open in your browser at `http://localhost:8501`.
